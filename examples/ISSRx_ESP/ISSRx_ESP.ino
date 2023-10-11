@@ -20,18 +20,18 @@
 //
 // Do NOT connect the Reset of the two together!!! Reset on the ESP8266 is active LOW and on
 // the RFM69 it is active HIGH.
-//      
+//
 //  See also https://github.com/esp8266/Arduino/blob/master/doc/reference.md
 //  and https://github.com/someburner/esp-rfm69 and
 //  http://www.cnx-software.com/2015/04/18/nodemcu-is-both-a-breadboard-friendly-esp8266-wi-fi-board-and-a-lua-based-firmware/
 
-#include "DavisRFM69.h"
+#include <DavisRFM69.h>
 #include <SPI.h>
 
 // NOTE: *** One of DAVIS_FREQS_US, DAVIS_FREQS_EU, DAVIS_FREQS_AU, or
 // DAVIS_FREQS_NZ MUST be defined at the top of DavisRFM69.h ***
 
-//#define IS_RFM69HW    //uncomment only for RFM69HW! Leave out if you have RFM69W!
+#define IS_RFM69HW    //uncomment only for RFM69HW! Leave out if you have RFM69W!
 #define SERIAL_BAUD   115200
 #define PACKET_INTERVAL 2555
 #define DEBUG true
@@ -69,7 +69,7 @@ void loop() {
     if (input == 't')
     {
       byte temperature =  radio.readTemperature(-1); // -1 = user cal factor, adjust for correct ambient
-      byte fTemp = 1.8 * temperature + 32; // 9/5=1.8
+      byte fTemp = 9 * temperature / 5 + 32; // 9/5=1.8
       Serial.print(F("Radio Temp is "));
       Serial.print(temperature);
       Serial.print(F("C, "));

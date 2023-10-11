@@ -19,8 +19,8 @@
 // America) and EU frequencies are defined at this time.  Australia and New
 // Zealand are placeholders.  Note however that the frequencies for AU and NZ
 // are not known at this time.
-#define DAVIS_FREQS_US
-//#define DAVIS_FREQS_EU
+//#define DAVIS_FREQS_US
+#define DAVIS_FREQS_EU
 //#define DAVIS_FREQS_AU
 //#define DAVIS_FREQS_NZ
 
@@ -29,23 +29,18 @@
 
 #define DAVIS_PACKET_LEN 10 // ISS has fixed packet length of 10 bytes,
                             // including CRC and retransmit CRC
-#define RF69_SPI_CS  SS     // SS is the SPI slave select pin
-                            // For instance D10 on ATmega328
-// INT0 on AVRs should be connected to RFM69's DIO0 (ex on ATmega328 it's D2, on ATmega644/1284 it's D2)
-#if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__) || defined(__AVR_ATmega88) || defined(__AVR_ATmega8__) || defined(__AVR_ATmega88__)
-  #define RF69_IRQ_PIN 2
-  #define RF69_IRQ_NUM 0
-#elif defined(__AVR_ATmega644P__) || defined(__AVR_ATmega1284P__)
-  #define RF69_IRQ_PIN 2
-  #define RF69_IRQ_NUM 2
-#elif defined(__AVR_ATmega32U4__)
-  #define RF69_IRQ_PIN 3
-  #define RF69_IRQ_NUM 0
-#elif defined(ESP8266)
-  // ESP interrupt number and pin number are a direct relation
-  // See http://www.esp8266.com/viewtopic.php?f=32&t=4694
-  #define RF69_IRQ_PIN 5
-  #define RF69_IRQ_NUM 5
+#define FEATHER_ESP32_V2
+
+#ifdef FEATHER_ESP32_V2
+#define RF69_SPI_CS   32  // (D)
+#define RF69_RST	  15  // (C)
+#define RF69_IRQ_PIN  27  // (A)
+#define RF69_IRQ_NUM  27
+#elif defined(ESP32_DEV_MODULE)
+#define RF69_SPI_CS   SS  // SS is the SPI slave select pin 
+#define RF69_RST	  15  // not connected
+#define RF69_IRQ_PIN  22  // 
+#define RF69_IRQ_NUM  22
 #endif
 
 #define CSMA_LIMIT          -90 // upper RX signal sensitivity threshold in dBm for carrier sense access
@@ -102,10 +97,11 @@ class DavisRFM69 {
     static volatile uint8_t CHANNEL;
     static volatile int16_t RSSI;
 
-    DavisRFM69(uint8_t slaveSelectPin=RF69_SPI_CS, uint8_t interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false, uint8_t interruptNum=RF69_IRQ_NUM) {
+    DavisRFM69(uint8_t slaveSelectPin=RF69_SPI_CS, uint8_t interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false, uint8_t interruptNum=RF69_IRQ_NUM, uint8_t resetPin=RF69_RST) {
       _slaveSelectPin = slaveSelectPin;
       _interruptPin = interruptPin;
-      _interruptNum = interruptNum;
+	  _interruptNum = interruptNum;
+	  _resetPin = resetPin;
       _mode = RF69_MODE_STANDBY;
       _packetReceived = false;
       _powerLevel = 31;
@@ -148,6 +144,7 @@ class DavisRFM69 {
     uint8_t _slaveSelectPin;
     uint8_t _interruptPin;
     uint8_t _interruptNum;
+	uint8_t _resetPin;
     uint8_t _powerLevel;
     bool _isRFM69HW;
     uint8_t _SPCR;

@@ -75,10 +75,15 @@ void DavisRFM69::initialize()
     {255, 0}
   };
 
-  digitalWrite(_slaveSelectPin, HIGH);
-  pinMode(_slaveSelectPin, OUTPUT);
-  SPI.begin();
+  // Configure reset pin
+  pinMode(_resetPin, OUTPUT);
+  digitalWrite(_resetPin, LOW);
+  delay(10);
 
+  // Select SPI
+  DavisRFM69::setCS(_slaveSelectPin);
+  SPI.begin(5,21,19,_slaveSelectPin);
+    
   // Is the RFM69 module alive?
   do writeReg(REG_SYNCVALUE1, 0xaa); while (readReg(REG_SYNCVALUE1) != 0xaa);
   do writeReg(REG_SYNCVALUE1, 0x55); while (readReg(REG_SYNCVALUE1) != 0x55);
@@ -88,8 +93,10 @@ void DavisRFM69::initialize()
 
   setHighPower(_isRFM69HW); // Called regardless if it's a RFM69W or RFM69HW
   setMode(RF69_MODE_STANDBY);
+
   while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // Wait for ModeReady
-  pinMode(RF69_IRQ_PIN, INPUT);  
+
+  pinMode(_interruptPin, INPUT);  
   attachInterrupt(_interruptNum, DavisRFM69::isr0, RISING);
 
   rcCalibration();  // Perform the coarse cal in case we haven't done POR in a long time
@@ -100,9 +107,9 @@ void DavisRFM69::initialize()
 void DavisRFM69::interruptHandler() {
 // See https://github.com/esp8266/Arduino/issues/1020 for how user libraries with
 // interrupts can crash the ESP.  Better to be safe than sorry for now.
-#if defined(ESP8266)
+/*#if defined(ESP8266)
   ETS_GPIO_INTR_DISABLE();
-#endif
+#endif*/
   if (_mode == RF69_MODE_RX && (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY))
   {
     setMode(RF69_MODE_STANDBY);
@@ -115,9 +122,9 @@ void DavisRFM69::interruptHandler() {
     unselect();  // Unselect RFM69 module, enabling interrupts
     RSSI = readRSSI();  // RSSI of last received packet remains available after reception
   }
-#if defined(ESP8266)
+/*#if defined(ESP8266)
   ETS_GPIO_INTR_ENABLE();
-#endif
+#endif*/
 }
 
 bool DavisRFM69::canSend()
@@ -256,7 +263,7 @@ void DavisRFM69::sleep() {
   setMode(RF69_MODE_SLEEP);
 }
 
-void DavisRFM69::isr0() { selfPointer->interruptHandler(); }
+void ICACHE_RAM_ATTR DavisRFM69::isr0() { selfPointer->interruptHandler(); }
 
 void DavisRFM69::receiveBegin() {
   _packetReceived = false;
@@ -305,29 +312,15 @@ void DavisRFM69::writeReg(uint8_t addr, uint8_t value)
 // Select the transceiver
 void DavisRFM69::select() {
   noInterrupts();
-#if defined(ARDUINO_ARCH_AVR)
-  // Save current SPI settings on Moteino's.  That board has a SPI flash
-  // as well as a SPI interface to the RFM69, so you need to save the old
-  // SPI config before talking to the RFM69.  We aren't doing this on the ESP.
-  _SPCR = SPCR;
-  _SPSR = SPSR;
-#endif
   // Set RFM69 SPI settings
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setBitOrder(MSBFIRST);
-  SPI.setClockDivider(SPI_CLOCK_DIV4); // decided to slow down from DIV2 after SPI stalling in some instances, especially visible on mega1284p when RFM69 and FLASH chip both present
+  SPI.beginTransaction(SPISettings(10000000, MSBFIRST, SPI_MODE0));
   digitalWrite(_slaveSelectPin, LOW);
 }
 
 // Unselect the transceiver chip
 void DavisRFM69::unselect() {
   digitalWrite(_slaveSelectPin, HIGH);
-  // Restore SPI settings on Moteino to what they were before talking to RFM69.
-  // See comment in DavisRFM69::select() for why.
-#if defined(ARDUINO_ARCH_AVR)
-  SPCR = _SPCR;
-  SPSR = _SPSR;
-#endif
+  SPI.endTransaction();
   interrupts();
 }
 
@@ -369,7 +362,6 @@ void DavisRFM69::readAllRegs()
     Serial.print(F(" - "));
     Serial.println(regVal,BIN);
   }
-  unselect();
 }
 
 uint8_t DavisRFM69::readTemperature(uint8_t calFactor)  // Returns centigrade
