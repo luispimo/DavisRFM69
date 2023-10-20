@@ -104,6 +104,13 @@ void DavisRFM69::initialize()
   selfPointer = this;
 }
 
+void DavisRFM69::reset() {
+	detachInterrupt(_interruptPin);
+	digitalWrite(_resetPin, HIGH);
+	delay(1);
+	initialize();
+}
+
 void DavisRFM69::interruptHandler() {
 // See https://github.com/esp8266/Arduino/issues/1020 for how user libraries with
 // interrupts can crash the ESP.  Better to be safe than sorry for now.

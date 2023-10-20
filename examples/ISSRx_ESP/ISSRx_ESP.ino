@@ -41,7 +41,7 @@ DavisRFM69 radio;
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
-  delay(10);
+  delay(100);
   radio.initialize();
   radio.setChannel(0);              // Frequency / Channel is *not* set in the initialization. Do it right after.
 #ifdef IS_RFM69HW
@@ -58,25 +58,7 @@ int16_t goodRssi = -999;
 
 void loop() {
   //process any serial input
-  if (Serial.available() > 0)
-  {
-    char input = Serial.read();
-    if (input == 'r') //r=dump all register values
-    {
-      radio.readAllRegs();
-      Serial.println();
-    }
-    if (input == 't')
-    {
-      byte temperature =  radio.readTemperature(-1); // -1 = user cal factor, adjust for correct ambient
-      byte fTemp = 9 * temperature / 5 + 32; // 9/5=1.8
-      Serial.print(F("Radio Temp is "));
-      Serial.print(temperature);
-      Serial.print(F("C, "));
-      Serial.print(fTemp); //converting to F loses some resolution, obvious when C is on edge between 2 values (ie 26C=78F, 27C=80F)
-      Serial.println(F("F"));
-    }
-  }
+  process_serial_commands();
 
   // The check for a zero CRC value indicates a bigger problem that will need
   // fixing, but it needs to stay until the fix is in.
@@ -94,41 +76,26 @@ void loop() {
       goodCrc = false;
       packetStats.crcErrors++;
       packetStats.receivedStreak = 0;
+      hopCount = 1; // hop radio channel even if CRC is not correct
     }
 
     if (strmon) printStrm();
-#if DEBUG
+
     // Debugging stuff
-    Serial.print(millis());
-    Serial.print(F(":  "));
-    Serial.print(radio.CHANNEL);
-    Serial.print(F(" - Data: "));
-    for (byte i = 0; i < DAVIS_PACKET_LEN; i++) {
-      Serial.print(radio.DATA[i], HEX);
-      Serial.print(F(" "));
-    }
-    Serial.print(F("  RSSI: "));
-    Serial.println(radio.RSSI);
-    int freqError = radio.readReg(0x21) << 8 |radio.readReg(0x22);
-    Serial.print(F("      Freq error): "));
-    Serial.println(freqError);
-#endif
+    print_debug_packet_info();
+
     // If packet was received earlier than expected, that was probably junk. Don't hop.
     // I use a simple heuristic for this.  If the CRC is bad and the received RSSI is
     // a lot less than the last known good RSSI, then don't hop.
     if (goodCrc && (radio.RSSI < (goodRssi + 15))) {
       lastRxTime = millis();
       radio.hop();
-#if DEBUG
       Serial.print(millis());
       Serial.println(F(":  Hopped channel and ready to receive."));
-#endif
     } else {
       radio.waitHere();
-#if DEBUG
       Serial.print(millis());
       Serial.println(F(":  Waiting here"));
-#endif
     }
   }
 
@@ -141,10 +108,8 @@ void loop() {
     if (hopCount == 1) packetStats.numResyncs++;
     if (++hopCount > 4) hopCount = 0;
     radio.hop();
-#if DEBUG
     Serial.print(millis());
-    Serial.println(F(":  Hopped channel and ready to receive."));
-#endif
+    Serial.println(F(":  Resync - Hopped channel and ready to receive."));
   }
 }
 
@@ -156,4 +121,80 @@ void printStrm() {
     Serial.print(F("\n\r"));
   }
   Serial.print(F("\n\r"));
+}
+
+void process_serial_commands() {
+    if (Serial.available() > 0)
+  {
+    char input = Serial.read();
+    if (input == 'r') //r=dump all register values
+    {
+      radio.readAllRegs();
+      Serial.println();
+    }
+    if (input == 't') // read radio temp
+    {
+      byte temperature =  radio.readTemperature(-1); // -1 = user cal factor, adjust for correct ambient
+      byte fTemp = 9 * temperature / 5 + 32; // 9/5=1.8
+      Serial.print(F("Radio Temp is "));
+      Serial.print(temperature);
+      Serial.print(F("C, "));
+      Serial.print(fTemp); //converting to F loses some resolution, obvious when C is on edge between 2 values (ie 26C=78F, 27C=80F)
+      Serial.println(F("F"));
+    }
+    if (input == 's') // show packet stats
+    {
+      Serial.print(F("packetsReceived: "));
+      Serial.print(packetStats.packetsReceived);
+      Serial.print(F(" packetsMissed: "));
+      Serial.print(packetStats.packetsMissed);
+      Serial.print(F(" numResyncs: "));
+      Serial.print(packetStats.numResyncs);
+      Serial.print(F(" receivedStreak: "));
+      Serial.print(packetStats.receivedStreak);
+      Serial.print(F(" crcErrors: "));
+      Serial.println(packetStats.crcErrors);
+    }
+    if (input == 'h') // manually hop radio channel
+    {
+      radio.hop();
+    }
+    if (input == 'b') // restart ESP32
+    {
+        ESP.restart();
+    }
+    if (input == 'R') // reset radio
+    {
+        radio.reset();
+    }
+    if (input == 'm') // show time in milliseconds
+    {
+        Serial.println(millis());
+    }
+    if (input == 'c') // show current radio channel
+    {
+        Serial.println(radio.CHANNEL);
+    }
+  }
+}
+
+void print_debug_packet_info () {
+    Serial.print(millis());
+    Serial.print(F(":  "));
+    Serial.print(radio.CHANNEL);
+    Serial.print(F(" - Data: "));
+    for (byte i = 0; i < DAVIS_PACKET_LEN; i++) {
+      Serial.print(radio.DATA[i], HEX);
+      Serial.print(F(" "));
+    }
+    Serial.print(F("  RSSI: "));
+    Serial.print(radio.RSSI);
+    //int freqError = radio.readReg(0x21) << 8 |radio.readReg(0x22);
+    //Serial.print(F("      Freq error): "));
+    //Serial.println(freqError);
+    Serial.print(F(" CRC: "));
+    if (goodCrc)
+       Serial.println(F("OK"));
+    else
+       Serial.println(F("ERROR"));
 }

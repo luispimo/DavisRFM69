@@ -116,6 +116,7 @@ class DavisRFM69 {
     uint16_t crc16_ccitt(volatile uint8_t *buf, uint8_t len, uint16_t initCrc = 0);
 
     void initialize();
+	void reset();
     bool canSend();
     void send(const void* buffer, uint8_t bufferSize);
     bool receiveDone();
