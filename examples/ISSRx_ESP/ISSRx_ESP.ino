@@ -34,7 +34,6 @@
 #define IS_RFM69HW    //uncomment only for RFM69HW! Leave out if you have RFM69W!
 #define SERIAL_BAUD   115200
 #define PACKET_INTERVAL 2555
-#define DEBUG true
 boolean strmon = false;       // Print the packet when received?
 
 DavisRFM69 radio;
@@ -56,6 +55,10 @@ byte hopCount = 0;
 boolean goodCrc = false;
 int16_t goodRssi = -999;
 
+int stationID = 1;
+bool correctID;
+long idErrors = 0;
+
 void loop() {
   //process any serial input
   process_serial_commands();
@@ -65,18 +68,23 @@ void loop() {
   // TODO Reset the packet statistics at midnight once I get my clock module.
   if (radio.receiveDone()) {
     packetStats.packetsReceived++;
+    correctID = (stationID == int (radio.DATA[0] & 0x3));
     unsigned int crc = radio.crc16_ccitt(radio.DATA, 6);
-    if ((crc == (word(radio.DATA[6], radio.DATA[7]))) && (crc != 0)) {
-      // This is a good packet
-      goodCrc = true;
-      goodRssi = radio.RSSI;
-      packetStats.receivedStreak++;
-      hopCount = 1;
+    if (correctID) {
+      if ((crc == (word(radio.DATA[6], radio.DATA[7]))) && (crc != 0)) {
+        // This is a good packet
+        goodCrc = true;
+        goodRssi = radio.RSSI;
+        packetStats.receivedStreak++;
+        hopCount = 1;
+      } else {
+        goodCrc = false;
+        packetStats.crcErrors++;
+        packetStats.receivedStreak = 0;
+        //hopCount = 1; // hop radio channel even if CRC is not correct
+      }
     } else {
-      goodCrc = false;
-      packetStats.crcErrors++;
-      packetStats.receivedStreak = 0;
-      hopCount = 1; // hop radio channel even if CRC is not correct
+      idErrors++;
     }
 
     if (strmon) printStrm();
@@ -87,15 +95,18 @@ void loop() {
     // If packet was received earlier than expected, that was probably junk. Don't hop.
     // I use a simple heuristic for this.  If the CRC is bad and the received RSSI is
     // a lot less than the last known good RSSI, then don't hop.
-    if (goodCrc && (radio.RSSI < (goodRssi + 15))) {
+    if (correctID && goodCrc && (radio.RSSI < (goodRssi + 15))) {
       lastRxTime = millis();
       radio.hop();
       Serial.print(millis());
       Serial.println(F(":  Hopped channel and ready to receive."));
+    //} else if (correctID) {
+      //radio.waitHere();
+      //Serial.print(millis());
+      //Serial.println(F(":  Waiting here"));
     } else {
-      radio.waitHere();
-      Serial.print(millis());
-      Serial.println(F(":  Waiting here"));
+      radio.setChannel(stationID); // indirect invocation of receiveBegin() private function
+      Serial.println(F(":  Wrong Station ID waiting in the same channel"));
     }
   }
 
@@ -103,7 +114,7 @@ void loop() {
   // in an attempt to keep up.  Give up after 4 failed attempts.  Keep track
   // of packet stats as we go.  I consider a consecutive string of missed
   // packets to be a single resync.  Thx to Kobuki for this algorithm.
-  if ((hopCount > 0) && ((millis() - lastRxTime) > (hopCount * PACKET_INTERVAL + 200))) {
+  if (correctID && (hopCount > 0) && ((millis() - lastRxTime) > (hopCount * PACKET_INTERVAL + 200))) {
     packetStats.packetsMissed++;
     if (hopCount == 1) packetStats.numResyncs++;
     if (++hopCount > 4) hopCount = 0;
@@ -113,20 +124,24 @@ void loop() {
   }
 }
 
-void printStrm() {
-  for (byte i = 0; i < DAVIS_PACKET_LEN; i++) {
-    Serial.print(i);
-    Serial.print(F(" = "));
-    Serial.print(radio.DATA[i], HEX);
-    Serial.print(F("\n\r"));
-  }
-  Serial.print(F("\n\r"));
-}
-
 void process_serial_commands() {
     if (Serial.available() > 0)
   {
     char input = Serial.read();
+    if (input == '?') 
+    {
+      Serial.println(F("Help:"));
+      Serial.println(F("- r: read all RFM69HW registers"));
+      Serial.println(F("- t: show radio temp"));
+      Serial.println(F("- s: show packet stats"));
+      Serial.println(F("- h: radio channel hop"));
+      Serial.println(F("- b: ESP restart"));
+      Serial.println(F("- R: RFM69HW reset"));
+      Serial.println(F("- m: show elapsed time in milliseconds"));
+      Serial.println(F("- c: show current radio channel"));
+      Serial.println(F("- i: set the current station ID"));
+      Serial.println(F("- I: show the current station ID"));
+    }
     if (input == 'r') //r=dump all register values
     {
       radio.readAllRegs();
@@ -153,7 +168,9 @@ void process_serial_commands() {
       Serial.print(F(" receivedStreak: "));
       Serial.print(packetStats.receivedStreak);
       Serial.print(F(" crcErrors: "));
-      Serial.println(packetStats.crcErrors);
+      Serial.println(packetStats.crcErrors); 
+      Serial.print(F(" idErrors: "));
+      Serial.println(idErrors);
     }
     if (input == 'h') // manually hop radio channel
     {
@@ -174,6 +191,14 @@ void process_serial_commands() {
     if (input == 'c') // show current radio channel
     {
         Serial.println(radio.CHANNEL);
+    }
+    if (input == 'i') // set the current station ID, ej: i 1
+    {
+        stationID = Serial.parseInt();
+    }
+    if (input == 'I') // show the current station ID
+    {
+        Serial.println(stationID);
     }
   }
 }
@@ -197,4 +222,14 @@ void print_debug_packet_info () {
        Serial.println(F("OK"));
     else
        Serial.println(F("ERROR"));
+}
+
+void printStrm() {
+  for (byte i = 0; i < DAVIS_PACKET_LEN; i++) {
+    Serial.print(i);
+    Serial.print(F(" = "));
+    Serial.print(radio.DATA[i], HEX);
+    Serial.print(F("\n\r"));
+  }
+  Serial.print(F("\n\r"));
 }
