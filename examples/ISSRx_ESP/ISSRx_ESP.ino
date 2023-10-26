@@ -1,29 +1,15 @@
 // Sample usage of the DavisRFM69 library to sniff the packets from a Davis Instruments
-// wireless Integrated Sensor Suite (ISS), demostrating compatibility between the RFM69
-// and the TI CC1020 transmitter used in that hardware.  Packets received from the ISS are
-// passes through to the serial port.  This code retains some of the debugging
-// functionality of the LowPowerLabs Gateway sketch, on which this code is based.
+// wireless Integrated Sensor Suite (ISS).
 //
 // This is part of the DavisRFM69 library from https://github.com/dekay/DavisRFM69
 // (C) DeKay 2014-2016 dekaymail@gmail.com
 // Example released under the MIT License (http://opensource.org/licenses/mit-license.php)
 // Get the RFM69 and SPIFlash library at: https://github.com/LowPowerLab/
 //
-// This program has been developed on an ESP-12E based NodeMCU module with an 
-// attached RFM69W transceiver module connected as follows:
-//      RFM69W      ESP-12E     NodeMCU
-//      MISO        GPIO12      D6
-//      MOSI        GPIO13      D7
-//      SCK         GPIO14      D5
-//      CS/SS       GPIO15      D8
-//      DIO0        GPIO5       D1  (Interrupt)
+// This program has been adapted by Luis Piñuel to work on an Adafruit Feather ESP32 V2 board 
+// with an attached RFM69W Feather Wing connected (see DavisRFM69.cpp for connection details).
 //
-// Do NOT connect the Reset of the two together!!! Reset on the ESP8266 is active LOW and on
-// the RFM69 it is active HIGH.
-//
-//  See also https://github.com/esp8266/Arduino/blob/master/doc/reference.md
-//  and https://github.com/someburner/esp-rfm69 and
-//  http://www.cnx-software.com/2015/04/18/nodemcu-is-both-a-breadboard-friendly-esp8266-wi-fi-board-and-a-lua-based-firmware/
+
 
 #include <DavisRFM69.h>
 #include <SPI.h>
@@ -31,10 +17,11 @@
 // NOTE: *** One of DAVIS_FREQS_US, DAVIS_FREQS_EU, DAVIS_FREQS_AU, or
 // DAVIS_FREQS_NZ MUST be defined at the top of DavisRFM69.h ***
 
-#define IS_RFM69HW    //uncomment only for RFM69HW! Leave out if you have RFM69W!
-#define SERIAL_BAUD   115200
-#define PACKET_INTERVAL 2555
-boolean strmon = false;       // Print the packet when received?
+#define IS_RFM69HW              //uncomment only for RFM69HW!
+#define SERIAL_BAUD     115200
+#define PACKET_INTERVAL 2563    // measured for ID=0
+#define POWER_SAVING
+boolean strmon = false;         // Print the packet when received?
 
 DavisRFM69 radio;
 
@@ -42,7 +29,7 @@ void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(100);
   radio.initialize();
-  radio.setChannel(0);              // Frequency / Channel is *not* set in the initialization. Do it right after.
+  radio.setChannel(0);  // Frequency / Channel is *not* set in the initialization. Do it right after.
 #ifdef IS_RFM69HW
   radio.setHighPower(); //uncomment only for RFM69HW!
 #endif
@@ -51,13 +38,14 @@ void setup() {
 
 unsigned long lastRxTime = 0;
 byte hopCount = 0;
-
 boolean goodCrc = false;
-int16_t goodRssi = -999;
 
-int stationID = 1;
+// Added support to filter packets from a specific station and add specific stats
+int stationID = 0;
 bool correctID;
 long idErrors = 0;
+
+// Stats by sensor
 
 void loop() {
   //process any serial input
@@ -65,67 +53,65 @@ void loop() {
 
   // The check for a zero CRC value indicates a bigger problem that will need
   // fixing, but it needs to stay until the fix is in.
-  // TODO Reset the packet statistics at midnight once I get my clock module.
   if (radio.receiveDone()) {
     packetStats.packetsReceived++;
-    correctID = (stationID == int (radio.DATA[0] & 0x3));
     unsigned int crc = radio.crc16_ccitt(radio.DATA, 6);
-    if (correctID) {
-      if ((crc == (word(radio.DATA[6], radio.DATA[7]))) && (crc != 0)) {
-        // This is a good packet
-        goodCrc = true;
-        goodRssi = radio.RSSI;
-        packetStats.receivedStreak++;
-        hopCount = 1;
-      } else {
-        goodCrc = false;
-        packetStats.crcErrors++;
-        packetStats.receivedStreak = 0;
-        //hopCount = 1; // hop radio channel even if CRC is not correct
-      }
+    if ((crc == (word(radio.DATA[6], radio.DATA[7]))) && (crc != 0)) {
+      // This is a good packet
+      goodCrc = true;
+      packetStats.receivedStreak++;
+      correctID = (stationID == int (radio.DATA[0] & 0x7));
+      if (correctID) 
+        hopCount = 1; // From correct station
+      else
+        idErrors++; // From wrong station
     } else {
-      idErrors++;
+      goodCrc = false; // Incorrect packet
+      packetStats.crcErrors++;
+      packetStats.receivedStreak = 0;
     }
 
+    // STRMON debugging (RAW packet)
     if (strmon) printStrm();
 
-    // Debugging stuff
+    // Print packet info
     print_debug_packet_info();
 
-    // If packet was received earlier than expected, that was probably junk. Don't hop.
-    // I use a simple heuristic for this.  If the CRC is bad and the received RSSI is
-    // a lot less than the last known good RSSI, then don't hop.
-    if (correctID && goodCrc && (radio.RSSI < (goodRssi + 15))) {
-      lastRxTime = millis();
+    // Radio hop only for correct packects (i.e. good CRC and correct station)
+    if (goodCrc && correctID) {
+      // Hop radio & update channel and lastRxTime
+      lastRxTime = millis();  
       radio.hop();
-      Serial.print(millis());
-      Serial.println(F(":  Hopped channel and ready to receive."));
-    //} else if (correctID) {
-      //radio.waitHere();
-      //Serial.print(millis());
-      //Serial.println(F(":  Waiting here"));
+#ifdef POWER_SAVING
+      esp_sleep_enable_timer_wakeup(2 * 1000000); // light sleep (2s) to save energy
+      esp_light_sleep_start();
+#endif
     } else {
-      radio.setChannel(stationID); // indirect invocation of receiveBegin() private function
-      Serial.println(F(":  Wrong Station ID waiting in the same channel"));
+      // Do not hop the radio for incorrect packets but activate reception. 
+      // Problem: receiveBegin() is a private function of the radio.classs 
+      // Workaround: use setChannel to indirectly invoke it (could be improved but it works)
+      radio.setChannel(radio.CHANNEL); 
     }
   }
 
   // If a packet was not received at the expected time, hop the radio anyway
   // in an attempt to keep up.  Give up after 4 failed attempts.  Keep track
-  // of packet stats as we go.  I consider a consecutive string of missed
-  // packets to be a single resync.  Thx to Kobuki for this algorithm.
-  if (correctID && (hopCount > 0) && ((millis() - lastRxTime) > (hopCount * PACKET_INTERVAL + 200))) {
+  // of packet stats as we go.  We consider a consecutive string of missed
+  // packets to be a single resync. 
+  if ((hopCount > 0) && ((millis() - lastRxTime) > (hopCount * (PACKET_INTERVAL + (1000*stationID/16)) + 50))) {
     packetStats.packetsMissed++;
     if (hopCount == 1) packetStats.numResyncs++;
     if (++hopCount > 4) hopCount = 0;
     radio.hop();
-    Serial.print(millis());
-    Serial.println(F(":  Resync - Hopped channel and ready to receive."));
+#ifdef POWER_SAVING
+    esp_sleep_enable_timer_wakeup(2 * 1000000); // light sleep (2s) to save energy
+    esp_light_sleep_start();
+#endif
   }
 }
 
 void process_serial_commands() {
-    if (Serial.available() > 0)
+  if (Serial.available() > 0)
   {
     char input = Serial.read();
     if (input == '?') 
@@ -135,7 +121,6 @@ void process_serial_commands() {
       Serial.println(F("- t: show radio temp"));
       Serial.println(F("- s: show packet stats"));
       Serial.println(F("- h: radio channel hop"));
-      Serial.println(F("- b: ESP restart"));
       Serial.println(F("- R: RFM69HW reset"));
       Serial.println(F("- m: show elapsed time in milliseconds"));
       Serial.println(F("- c: show current radio channel"));
@@ -168,17 +153,19 @@ void process_serial_commands() {
       Serial.print(F(" receivedStreak: "));
       Serial.print(packetStats.receivedStreak);
       Serial.print(F(" crcErrors: "));
-      Serial.println(packetStats.crcErrors); 
+      Serial.print(packetStats.crcErrors); 
       Serial.print(F(" idErrors: "));
-      Serial.println(idErrors);
+      Serial.print(idErrors);
+      Serial.print(F(" packets/min: "));
+      unsigned long min = millis()/60000;
+      unsigned long correct_packets = packetStats.packetsReceived - packetStats.crcErrors - idErrors;
+      float rate = 0.0;
+      if (min>0) rate = correct_packets/min;
+      Serial.println(rate);
     }
     if (input == 'h') // manually hop radio channel
     {
       radio.hop();
-    }
-    if (input == 'b') // restart ESP32
-    {
-        ESP.restart();
     }
     if (input == 'R') // reset radio
     {
