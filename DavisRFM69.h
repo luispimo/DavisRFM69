@@ -298,11 +298,11 @@ static const uint8_t __attribute__ ((progmem)) FRF[DAVIS_FREQ_TABLE_LENGTH][3] =
 
 struct __attribute__((packed)) PacketStats
 {
-  uint16_t packetsReceived;
-  uint16_t packetsMissed;
-  uint16_t numResyncs;
-  uint16_t receivedStreak;
-  uint16_t crcErrors;
+  uint32_t packetsReceived;
+  uint32_t packetsMissed;
+  uint32_t numResyncs;
+  uint32_t receivedStreak;
+  uint32_t crcErrors;
 };
 
 static PacketStats packetStats = {0, 0, 0, 0 ,0};
